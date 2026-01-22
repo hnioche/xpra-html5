@@ -2582,8 +2582,7 @@ class XpraClient {
       $("#shutdown_menu_entry").hide();
     }
     if (
-      !this.file_transfer ||
-      (!hello["file-transfer"] && (!hello["file"] || !hello["file"]["enabled"]))
+      !this.file_transfer || !hello["file"] || !hello["file"]["enabled"]
     ) {
       $("#upload_menu_entry").hide();
       $("#download_menu_entry").hide();
@@ -2602,8 +2601,8 @@ class XpraClient {
     this.server_precise_wheel = hello["wheel.precise"] || false;
 
     this.remote_open_files = Boolean(hello["open-files"]);
-    this.remote_file_transfer = Boolean(hello["file"]?["enabled"]);
-    this.remote_printing = Boolean(hello["file"]["printing"]);
+    this.remote_file_transfer = hello["file"] && Boolean(hello["file"]["enabled"]);
+    this.remote_printing = hello["file"] && Boolean(hello["file"]["printing"]);
     if (this.remote_printing && this.printing) {
       // send our printer definition
       const printers = {
