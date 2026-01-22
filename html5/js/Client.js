@@ -2624,8 +2624,8 @@ class XpraClient {
     this.clipboard_enabled = Boolean(hello["clipboard"] || false);
 
     // file transfer attributes:
-    this.remote_file_size_limit = hello["file"]?["size-limit"] || 0;
-    this.remote_file_chunks = Math.max(0, Math.min(this.remote_file_size_limit, hello["file"]?["chunks"] || 0));
+    this.remote_file_size_limit = hello["file"] ? hello["file"]["size-limit"] : 0;
+    this.remote_file_chunks = Math.max(0, Math.min(this.remote_file_size_limit, hello["file"] ? hello["file"]["chunks"] : 0));
 
     // start sending our own pings
     this._send_ping();
