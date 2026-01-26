@@ -2643,8 +2643,7 @@ class XpraClient {
       $("#shutdown_menu_entry").hide();
     }
     if (
-      !this.file_transfer ||
-      (!hello["file-transfer"] && (!hello["file"] || !hello["file"]["enabled"]))
+      !this.file_transfer || !hello["file"] || !hello["file"]["enabled"]
     ) {
       $("#upload_menu_entry").hide();
       $("#download_menu_entry").hide();
@@ -2662,8 +2661,8 @@ class XpraClient {
 
     this.server_precise_wheel = hello["wheel.precise"] || false;
 
-    this.remote_open_files = Boolean(hello["open-files"]);
-    this.remote_file_transfer = Boolean(hello["file-transfer"]);
+    this.remote_open_files = hello["file"] && Boolean(hello["file"]["open"]);
+    this.remote_file_transfer = hello["file"] && Boolean(hello["file"]["enabled"]);
     this.remote_printing = Boolean(hello["printing"]);
     if (this.remote_printing && this.printing) {
       // send our printer definition
@@ -2686,8 +2685,8 @@ class XpraClient {
     this.clipboard_enabled = Boolean(hello["clipboard"] || false);
 
     // file transfer attributes:
-    this.remote_file_size_limit = hello["max-file-size"];
-    this.remote_file_chunks = Math.max(0, Math.min(this.remote_file_size_limit, hello["file-chunks"] || 0));
+    this.remote_file_size_limit = hello["file"] ? hello["file"]["size-limit"] : 0;
+    this.remote_file_chunks = Math.max(0, Math.min(this.remote_file_size_limit, hello["file"] ? hello["file"]["chunks"] : 0));
 
     // start sending our own pings
     this._send_ping();
