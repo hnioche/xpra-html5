@@ -3,7 +3,7 @@
 # Xpra is released under the terms of the GNU GPL v2, or, at your option, any
 # later version. See the file COPYING for details.
 
-%define version 19
+%define version 20
 %define release 1.r0%{?dist}
 %define minifier uglifyjs
 %define python python3

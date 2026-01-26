@@ -90,7 +90,7 @@ class XpraWindow {
     this.maximized = false;
     this.focused = false;
     this.decorations = true;    // whether the window should be decorated or not
-    this.decorated = true;      // whether it actually is (fullscreen windows are not)
+    this.decorated = false;      // whether it actually is (fullscreen windows are not)
     this.resizable = false;
     this.stacking_layer = 0;
 
@@ -250,10 +250,10 @@ class XpraWindow {
         decorated = false;
       }
       else {
-        decorated = !this.has_windowtype(["DROPDOWN", "TOOLTIP", "POPUP_MENU", "MENU", "COMBO"]);
+        decorated = !this.is_desktop() && !this.has_windowtype(["DROPDOWN", "TOOLTIP", "POPUP_MENU", "MENU", "COMBO"]);
       }
       this._set_decorated(decorated);
-      console.log("decorated=", decorated, "for windowtype=", this.windowtype);
+      this.debug("geometry", "decorated=", decorated, "for windowtype=", this.windowtype);
     }
   }
 
@@ -262,6 +262,23 @@ class XpraWindow {
     return this.windowtype.some(element => windowtypes_set.has(element));
   }
 
+  is_desktop() {
+    if (this.metadata["shadow"]) {
+      return true;
+    }
+    if (this.metadata["desktop"]) {
+      return true;
+    }
+    // backwards compatibility for xpra server <= v6.4 :
+    // the 'desktop' attribute may not be set
+    const wm_class = this.metadata["class-instance"] || [];
+    for (const element of wm_class) {
+      if (element === "xpra-desktop" || element === "Xpra-Desktop") {
+        return true;
+      }
+    }
+    return this.has_windowtype(["DESKTOP"]);
+  }
 
   make_draggable() {
     if (this.scale !== 1) {
@@ -892,6 +909,7 @@ class XpraWindow {
   }
 
   _set_decorated(decorated) {
+    const was_decorated = this.decorated;
     this.decorated = decorated;
     const head = document.getElementById("head"+this.wid);
     if (decorated) {
@@ -904,6 +922,15 @@ class XpraWindow {
       jQuery(this.div).addClass("undecorated");
     }
     this.update_offsets();
+    if (was_decorated !== this.decorated) {
+      if (this.decorated) {
+        this.y += this.topoffset;
+      } else {
+        this.y -= this.topoffset;
+      }
+      this.ensure_visible();
+      this.geometry_cb(this);
+    }
   }
 
   /**

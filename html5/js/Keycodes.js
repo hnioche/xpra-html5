@@ -1743,8 +1743,60 @@ CHARCODE_TO_NAME_SHIFTED = {};
 CHARCODE_TO_NAME_SHIFTED[187] = "dead_grave";
 CHARCODE_TO_NAME_SHIFTED[221] = "dead_grave";
 
+MODIFIERS_NAMES  = {
+  "Control": "control",
+  "Alt": "mod1",
+  "Meta": "mod4",
+  "Shift": "shift",
+  "AltGraph": "mod5",
+  "CapsLock": "lock",
+  "NumLock": "mod2",
+  "ScrollLock": "",
+  "Fn": "",
+  "Hyper": "",
+  "OS": "",
+  "Super": "",
+  "Symbol": "",
+  "SymbolLock": "",
+}
+
 /**
- * Converts an event into a list of modifiers.
+ * Maps X11 modifier names to their Javascript equivalent.
+ *
+ * This map is used by the client for updating the MODIFIERS_NAMES table at runtime.
+ * we prefer looking up just the left ("_L") variants for simplicity,
+ * and also because the ones on the right ("_R") are more often re-purposed.
+ */
+X11_TO_MODIFIER = {
+  "Num_Lock": "NumLock",
+  "Alt_L": "Alt",
+  "Meta_L": "Meta",
+  "ISO_Level3_Shift": "AltGraph",
+  "Mode_switch": "AltGraph",
+  "Control_L": "Control",
+  "Shift_L": "Shift",
+  "Caps_Lock": "CapsLock",
+  "Super_L": "Super",
+}
+
+/**
+ * Records a modifier mapping in `MODIFIER_NAMES` for x11 keysyms in `X11_TO_MODIFIER`.
+ * @param modifier a modifier
+ * @param key an x11 keysym, ie: `Control_L`
+ */
+function parse_modifier_key(modifier, key) {
+  const client_modifier = X11_TO_MODIFIER[key];
+  if (client_modifier) {
+    MODIFIERS_NAMES[client_modifier] = modifier;
+  }
+}
+
+
+/**
+ * Retrieves a list of modifiers names from an event.
+ * The list uses the Javascript event names.
+ * (ie: `Alt`, `Shift`, `Meta`, etc)
+ * To get the X11 modifier names, use `translate_modifiers()`.
  *
  * @param event
  * @returns {Array} of strings
@@ -1752,25 +1804,100 @@ CHARCODE_TO_NAME_SHIFTED[221] = "dead_grave";
 function get_event_modifiers(event) {
   const modifiers = [];
   if (event.getModifierState) {
-    if (event.getModifierState("Control")) modifiers.push("control");
-    if (event.getModifierState("Alt")) modifiers.push("alt");
-    if (event.getModifierState("Meta")) modifiers.push("meta");
-    if (event.getModifierState("Shift")) modifiers.push("shift");
-    if (event.getModifierState("CapsLock")) modifiers.push("capslock");
-    if (event.getModifierState("NumLock")) modifiers.push("numlock");
-    //ScrollLock
-    //Fn
-    //AltGraph
+    for (const jsmod in MODIFIERS_NAMES) {
+      if (event.getModifierState(jsmod)) {
+        modifiers.push(jsmod);
+      }
+    }
   } else if (event.modifiers) {
-    if (event.modifiers & Event.ALT_MASK) modifiers.push("alt");
-    if (event.modifiers & Event.CONTROL_MASK) modifiers.push("control");
-    if (event.modifiers & Event.SHIFT_MASK) modifiers.push("shift");
-    if (event.modifiers & Event.META_MASK) modifiers.push("meta");
+    if (event.modifiers & Event.ALT_MASK) modifiers.push("Alt");
+    if (event.modifiers & Event.CONTROL_MASK) modifiers.push("Control");
+    if (event.modifiers & Event.SHIFT_MASK) modifiers.push("Shift");
+    if (event.modifiers & Event.META_MASK) modifiers.push("Meta");
   } else {
-    if (event.altKey) modifiers.push("alt");
-    if (event.ctrlKey) modifiers.push("control");
-    if (event.metaKey) modifiers.push("meta");
-    if (event.shiftKey) modifiers.push("shift");
+    if (event.altKey) modifiers.push("Alt");
+    if (event.ctrlKey) modifiers.push("Control");
+    if (event.shiftKey) modifiers.push("Shift");
+    if (event.metaKey) modifiers.push("Meta");
   }
   return modifiers;
+}
+
+function translate_modifiers(modifiers, swap_keys) {
+  /**
+   * Translates Javascript modifier names to X11 names.
+   * (ie: usually `mod1` for `Alt`)
+   * Also add `AltGr` if the flag is specified, and swaps `Meta` and `Control` keys for macos clients.
+   */
+  const new_modifiers = [];
+  // copy the dictionary:
+  const names = { ...MODIFIERS_NAMES};
+  if (swap_keys) {
+    const meta = names["Meta"];
+    const control = names["Control"];
+    names["Control"] = meta;
+    names["Meta"] = control;
+  }
+
+  // translate each Javascript modifier:
+  for (const js_modifier of modifiers) {
+    const modifier = names[js_modifier] || "";
+    if (modifier) {
+      new_modifiers.push(modifier);
+    }
+  }
+  return new_modifiers;
+}
+
+function patch_altgr(modifiers) {
+  const alt = MODIFIERS_NAMES["Alt"];
+  const control = MODIFIERS_NAMES["Control"];
+  const altgr = MODIFIERS_NAMES["AltGraph"];
+
+  // add AltGr?
+  if (altgr && !modifiers.includes(altgr)) {
+    modifiers.push(altgr);
+    // remove spurious modifiers 'Alt' and 'Control':
+    for (const remove of [alt, control]) {
+      let index = modifiers.indexOf(alt);
+      if (index >= 0) {
+        modifiers.splice(index, 1);
+      }
+    }
+  }
+  return modifiers;
+}
+
+
+function parse_modifiers(modifier_keycodes) {
+  if (!modifier_keycodes) {
+    return;
+  }
+  for (const modifier in modifier_keycodes) {
+    const client_keydefs = modifier_keycodes[modifier];
+    // [(99, Super_L), (Super_L, 1), ...]
+    for (const client_keydef of client_keydefs) {
+      // ie: (99, Super_L)
+      try {
+        for (const value of client_keydef) {
+          parse_modifier_key(modifier, value);
+        }
+      }
+      catch {}
+    }
+  }
+}
+
+function parse_server_modifiers(modifiers) {
+  if (!modifiers) {
+    return;
+  }
+  // ie: {"control": ["Control_L", "Control_R"], "shift": ...}
+  for (const modifier in modifiers) {
+    const mappings = modifiers[modifier];
+    // ie: ["Control_L", "Control_R"]
+    for (const key of mappings) {
+      parse_modifier_key(modifier, key);
+    }
+  }
 }

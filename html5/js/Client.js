@@ -53,6 +53,7 @@ const METADATA_SUPPORTED = [
   "class-instance", "transient-for", "window-type",
   "has-alpha", "decorations", "override-redirect",
   "tray", "modal", "opacity",
+  "desktop", "shadow",
 ]
 
 // This option adds the CSS class .gpu-trigger to the windows.
@@ -288,6 +289,8 @@ class XpraClient {
     this.mouse_grabbed = false;
     this.scroll_reverse_x = false;
     this.scroll_reverse_y = "auto";
+    this.middle_emulation_modifier = default_settings["middle_emulation_modifier"] || "";
+    this.middle_emulation_button = 2;
     // clipboard
     this.clipboard_direction = default_settings["clipboard_direction"] || "both";
     this.clipboard_datatype = null;
@@ -755,35 +758,41 @@ class XpraClient {
       "vrefresh": this.vrefresh,
     }];
     this.send(packet);
+
     // call the screen_resized function on all open windows
     for (const index in this.id_to_window) {
       const win = this.id_to_window[index];
       win.screen_resized();
-
-      // Force fullscreen on a a given window name from the provided settings
-      if (
-        default_settings !== undefined &&
-        default_settings.auto_fullscreen !== undefined &&
-        default_settings.auto_fullscreen.length > 0
-      ) {
-        const pattern = new RegExp(`.*${default_settings.auto_fullscreen}.*`);
-        if (win.fullscreen === false && pattern.test(win.metadata.title)) {
-          clog(`auto fullscreen window: ${win.metadata.title}`);
-          win.set_fullscreen(true);
-          win.screen_resized();
-        }
-      }
-
-      // Make a DESKTOP-type window fullscreen automatically.
-      // This resizes things like xfdesktop according to the window size.
-      if (this.fullscreen === false && this.client.is_window_desktop(win)) {
-        clog(`auto fullscreen desktop window: ${this.metadata.title}`);
-        this.set_fullscreen(true);
-        this.screen_resized();
-      }
     }
     // Re-position floating toolbar menu
     this.position_float_menu();
+  }
+
+  auto_fullscreen_desktop_window()  {
+    // count the number of desktop windows:
+    let desktop_windows = 0;
+    for (const index in this.id_to_window) {
+      const win = this.id_to_window[index];
+      if (win.is_desktop()) {
+        desktop_windows++;
+      }
+    }
+    for (const index in this.id_to_window) {
+      const win = this.id_to_window[index];
+
+      if (win.is_desktop()) {
+        if (desktop_windows === 1) {
+          // If we have only one DESKTOP-type window, then make it fullscreen automatically.
+          clog(`auto fullscreen desktop window: ${win.metadata.title}`);
+          win.set_fullscreen(true);
+        }
+        else {
+          // if we have more than one desktop window: none of them should be fullscreen
+          // so we can access all of them individually
+          win.set_fullscreen(false);
+        }
+      }
+    }
   }
 
   /**
@@ -800,7 +809,6 @@ class XpraClient {
     this.meta_modifier = null;
     this.altgr_modifier = null;
     this.altgr_state = false;
-
     this.capture_keyboard = false;
     // assign the key callbacks
     document.addEventListener("keydown", (e) => {
@@ -902,51 +910,11 @@ class XpraClient {
   }
 
   translate_modifiers(modifiers) {
-    /**
-     * We translate "alt" and "meta" into their keymap name.
-     * (usually "mod1")
-     * And also swap keys for macos clients.
-     */
-    //convert generic modifiers "meta" and "alt" into their x11 name:
-    const alt = this.alt_modifier;
-    let control = this.control_modifier;
-    let meta = this.meta_modifier;
-    const altgr = this.altgr_modifier;
-    if (this.swap_keys) {
-      meta = this.control_modifier;
-      control = this.meta_modifier;
+    let new_modifiers = modifiers;
+    if (this.altgr_state) {
+      new_modifiers = patch_altgr(modifiers);
     }
-
-    const new_modifiers = [...modifiers];
-    let index = modifiers.indexOf("meta");
-    if (index >= 0 && meta) new_modifiers[index] = meta;
-    index = modifiers.indexOf("control");
-    if (index >= 0 && control) new_modifiers[index] = control;
-    index = modifiers.indexOf("alt");
-    if (index >= 0 && alt) new_modifiers[index] = alt;
-    index = modifiers.indexOf("numlock");
-    if (index >= 0) {
-      if (this.num_lock_modifier) {
-        new_modifiers[index] = this.num_lock_modifier;
-      } else {
-        new_modifiers.splice(index, 1);
-      }
-    }
-    index = modifiers.indexOf("capslock");
-    if (index >= 0) {
-      new_modifiers[index] = "lock";
-    }
-
-    //add altgr?
-    if (this.altgr_state && altgr && !new_modifiers.includes(altgr)) {
-      new_modifiers.push(altgr);
-      //remove spurious modifiers:
-      index = new_modifiers.indexOf(alt);
-      if (index >= 0) new_modifiers.splice(index, 1);
-      index = new_modifiers.indexOf(control);
-      if (index >= 0) new_modifiers.splice(index, 1);
-    }
-    return new_modifiers;
+    return translate_modifiers(new_modifiers, this.swap_keys);
   }
 
   _check_browser_language(key_layout) {
@@ -1088,7 +1056,7 @@ class XpraClient {
     }
 
     const raw_modifiers = get_event_modifiers(event);
-    const modifiers = this._keyb_get_modifiers(event);
+    const modifiers = this.translate_modifiers(raw_modifiers);
     const keyval = keycode;
     const group = 0;
 
@@ -1117,7 +1085,7 @@ class XpraClient {
 
     //macos will swallow the key release event if the meta modifier is pressed,
     //so simulate one immediately:
-    if (pressed && Utilities.isMacOS() && raw_modifiers.includes("meta") && ostr !== "meta") {
+    if (pressed && Utilities.isMacOS() && raw_modifiers.includes("Meta") && ostr !== "meta") {
       unpress_now = true;
     }
 
@@ -1126,11 +1094,11 @@ class XpraClient {
       //allow some key events that need to be seen by the browser
       //for handling the clipboard:
       let clipboard_modifier_keys = ["Control_L", "Control_R", "Shift_L", "Shift_R"];
-      let clipboard_modifier = "control";
+      let clipboard_modifier = "Control";
       if (Utilities.isMacOS()) {
         //Apple does things differently, as usual:
         clipboard_modifier_keys = ["Meta_L", "Meta_R", "Shift_L", "Shift_R"];
-        clipboard_modifier = "meta";
+        clipboard_modifier = "Meta";
       }
       //let the OS see Control (or Meta on macos) and Shift:
       if (clipboard_modifier_keys.includes(keyname)) {
@@ -1820,6 +1788,22 @@ class XpraClient {
     }
 
     let button = mouse.button;
+    const emulate_mod = (this.middle_emulation_modifier || "").toLowerCase();
+    const emulate_with = {
+      "control": e.ctrlKey,
+      "meta": e.metaKey,
+      "alt": e.altKey,
+      "shift": e.shiftKey,
+    };
+    const modifier_active = emulate_mod && emulate_with[emulate_mod];
+    if (modifier_active && button === 1) {
+      button = this.middle_emulation_button || 2;
+      const translated_mod = this.translate_modifiers([emulate_mod])[0];
+      const mod_index = modifiers.indexOf(translated_mod);
+      if (mod_index >= 0) {
+        modifiers.splice(mod_index, 1);
+      }
+    }
     const lbe = this.last_button_event;
     if (lbe[0] === button && lbe[1] === pressed && lbe[2] === x && lbe[3] === y) {
       //duplicate!
@@ -2198,27 +2182,6 @@ class XpraClient {
       return;
     }
 
-    // Keep DESKTOP-type windows per default settings lower than all other windows.
-    // Only allow focus if all other windows are minimized.
-    if (
-      default_settings !== undefined &&
-      default_settings.auto_fullscreen_desktop_class !== undefined &&
-      default_settings.auto_fullscreen_desktop_class.length > 0
-    ) {
-      const auto_fullscreen_desktop_class = default_settings.auto_fullscreen_desktop_class;
-      if (
-        win.windowtype === "DESKTOP" &&
-        win.metadata["class-instance"].includes(auto_fullscreen_desktop_class)
-      ) {
-        for (const index in this.id_to_window) {
-          const otherwin = this.id_to_window[index];
-          if (otherwin.wid !== win.wid && !otherwin.minimized) {
-            return;
-          }
-        }
-      }
-    }
-
     const top_stacking_layer = Object.keys(this.id_to_window).length;
     const old_stacking_layer = win.stacking_layer;
     const had_focus = this.focused_wid;
@@ -2249,26 +2212,6 @@ class XpraClient {
       iwin.updateFocus();
       iwin.update_zindex();
     }
-  }
-
-  /*
-   * detect DESKTOP-type window from settings
-   */
-  is_window_desktop(win) {
-    if (
-      default_settings !== undefined &&
-      default_settings.auto_fullscreen_desktop_class !== undefined &&
-      default_settings.auto_fullscreen_desktop_class.length > 0
-    ) {
-      const auto_fullscreen_desktop_class = default_settings.auto_fullscreen_desktop_class;
-      if (
-        win.windowtype === "DESKTOP" &&
-        win.metadata["class-instance"].includes(auto_fullscreen_desktop_class)
-      ) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /*
@@ -2322,7 +2265,7 @@ class XpraClient {
     // Sort windows by stacking order.;
     const windows_sorted = Object.values(client.id_to_window).filter((win) => {
       // skip DESKTOP type windows.
-      return !client.is_window_desktop(win);
+      return !win.is_desktop();
     });
 
     if (windows_sorted.length === 0) {
@@ -2632,6 +2575,8 @@ class XpraClient {
     this.log("got hello: server version", version, "accepted our connection");
     // stuff that must be done after hello
     this._process_modifier_keycodes(hello["modifier_keycodes"] || {});
+    this._process_modifier_keynames(hello["modifiers-keynames"] || {});
+    clog("modifier mappings:", MODIFIERS_NAMES);
     this._process_audio_caps(hello["audio"] || {});
     if (SHOW_START_MENU) {
       this.xdg_menu = hello["xdg-menu"];
@@ -2729,32 +2674,13 @@ class XpraClient {
   }
 
   _process_modifier_keycodes(modifier_keycodes) {
-    // find the modifier to use for Num_Lock
-    if (!modifier_keycodes) {
-      return;
-    }
-    for (const modifier in modifier_keycodes) {
-      if (Object.hasOwn(modifier_keycodes, modifier)) {
-        const mappings = modifier_keycodes[modifier];
-        for (const keycode in mappings) {
-          const keys = mappings[keycode];
-          for (const index in keys) {
-            const key = keys[index];
-            if (key === "Num_Lock") {
-              this.num_lock_modifier = modifier;
-            } else if (key === "Alt_L") {
-              this.alt_modifier = modifier;
-            } else if (key === "Meta_L") {
-              this.meta_modifier = modifier;
-            } else if (key === "ISO_Level3_Shift" || key === "Mode_switch") {
-              this.altgr_modifier = modifier;
-            } else if (key === "Control_L") {
-              this.control_modifier = modifier;
-            }
-          }
-        }
-      }
-    }
+    // derive the mapping from the client keycodes:
+    parse_modifiers(modifier_keycodes);
+  }
+
+  _process_modifier_keynames(modifier_keycodes) {
+    // derive from the server modifier map:
+    parse_server_modifiers(modifier_keycodes);
   }
 
   _process_audio_caps(audio_caps) {
@@ -3297,6 +3223,7 @@ class XpraClient {
       window.addWindowListItem(win, wid, trimmedTitle);
     }
     this.id_to_window[wid] = win;
+    this.auto_fullscreen_desktop_window();
     if (!override_redirect) {
       const geom = win.get_internal_geometry();
       this.send([PACKET_TYPES.map_window, wid, geom.x, geom.y, geom.w, geom.h, win.client_properties]);
